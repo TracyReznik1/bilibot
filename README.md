@@ -1,118 +1,93 @@
-# 🤖 Bilibili AI Bot
+# 🤖 Bilibili AI Bot (Enhanced Edition)
 
-一个部署在B站的 **AI 角色系统** —— 自动回复评论、主动刷视频、发动态、有记忆、会成长。
+<div align="center">
 
-只需填好人设和 API Key 就能用。全部功能通过 **Web 面板** 管理，无需改代码。
+一个深度演化、支持安全私信、精准楼中楼回复与智能降级视频流的 **B站全能 AI 角色系统**。
 
----
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B-brightgreen.svg)](https://www.python.org/)
+[![Tests Passing](https://img.shields.io/badge/Tests-32%20Passed-success.svg)](#-自动化测试与质量保障)
+[![GitHub Stars](https://img.shields.io/github/stars/TracyReznik1/bilibot?style=social)](https://github.com/TracyReznik1/bilibot)
 
-## ✨ 功能一览
-
-### 🗣️ 智能评论回复
-- 自动检测新评论并生成 AI 回复
-- 支持多模型（Claude / Gemini / GPT 等 OpenAI 兼容 API）
-- 主模型失败自动切换备用模型
-- 识别评论中的**图片**，结合视觉模型理解内容后回复
-- 识别评论所在的**视频内容**，结合上下文回复
-- 触发关键词联网搜索，回答时事类问题
-
-### ✉️ B站私信
-- 在同一套人格、记忆、好感度和用户档案下回复新私信
-- 首次开启只建立当前位置，不处理历史私信
-- 处理纯文本和B站站内视频分享卡片；每条消息只处理一次，发送失败也不会自动重复发送
-- 可限制为仅主人、主人和白名单，或所有安全私信
-- 对不明外链、IP 链接和疑似色情引流先隔离，可直接调用 B站拉黑
-- 安全判断只解析文字，**不会访问私信里的链接**
-
-### 🧠 记忆系统
-- 基于 **语义向量检索** 的长期记忆（BAAI/bge-m3 embedding）
-- 按对话线程和用户分别管理记忆
-- 自动压缩过长记忆，保留关键信息
-- 💎 永久记忆：AI 自动识别需要长期记住的重要事件
-- 记忆在 B站评论和本地聊天之间**共享**
-
-### 💛 好感度与用户档案
-- 每个用户有独立的好感度分数（0~100）
-- 根据好感度划分关系等级：陌生人 → 粉丝 → 熟人 → 好友 → 主人
-- 不同关系等级，回复态度和亲密程度不同
-- AI 自动记录对每个用户的印象和关键信息
-- 好感度过低或连续辱骂自动拉黑
-
-### 📺 主动行为
-- **主动刷视频**：每天随机时间浏览推荐/关注UP主的视频
-- **主动评论**：看完视频后发表评价
-- **点赞/投币/收藏/关注**：根据评价决定互动行为
-- **发动态**：每天随机时间发布一条 B站动态（支持 AI 配图）
-- 所有时间随机生成，行为自然拟人
-
-### 🌱 性格成长
-- 每天自动反思当天的互动
-- 性格特征、说话习惯、对事物的看法会随时间**动态演化**
-- 所有成长记录可在面板中查看和管理
-
-### 😊 心情系统
-- 根据互动内容实时变化心情
-- 心情影响回复的语气和风格
-- 可在面板查看当前心情状态
-
-### 🎭 多人格系统
-- 支持创建和切换多个人格（角色设定）
-- 每个人格有独立的系统提示词、风格提示词、主人提示词
-- 前端一键切换，无需重启
-
-### 🖼️ AI 画图
-- 本地聊天中支持 AI 画图（默认 Flux.2 Pro）
-- 发动态时可以自动生成配图
-
-### 🔍 联网搜索
-- 检测到时事类问题自动联网搜索
-- 搜索结果融入回复上下文
+</div>
 
 ---
 
-## 🖥️ Web 管理面板
+> 💡 **致敬与开源血统 (Upstream Tribute)**：
+> 
+> 本项目基于 [@chenluQwQ](https://github.com/chenluQwQ) 开源的优秀原型项目 [chenluQwQ/bilibili-ai-bot](https://github.com/chenluQwQ/bilibili-ai-bot) 进行深度演化与重构。衷心感谢原作者为社区带来的出色架构与灵感！
+> 
+> 在原版基础上，本增强版重构了底层评论交互协议，自研了闭环私信安全体系、三级平滑降级的主动视频流、动态用户全生命周期管理系统，并实现了全域零硬编码与自动化测试工程化。
 
-全功能 Web 面板，支持**桌面端和手机端**：
+---
 
-| 面板 | 功能 |
-|------|------|
-| 💬 聊天 | 与 Bot 直接对话，支持图片和 AI 画图 |
-| 📋 快捷总结 | 一键生成互动记忆总结 |
-| 🎭 人格管理 | 创建/编辑/切换多个角色人格 |
-| 👥 用户管理 | 查看所有用户的好感度、档案、印象 |
-| 🧠 记忆管理 | 浏览和搜索所有记忆，手动删除 |
-| 🌱 成长日志 | 查看性格演化轨迹、说话习惯、对事物的看法 |
-| 📺 活动日志 | 今日计划、观影日记、主动评论、动态记录 |
-| 💰 费用统计 | API 调用费用按模型分类统计 |
-| ⚙ 系统设置 | Cookie 管理、API 配置、模型切换、功能开关、提示词编辑 |
+## 🌟 核心差异与特性升级 (Original vs Enhanced)
 
-面板特性：
-- 🔒 访问密码保护
-- 🔄 配置热更新，改完即时生效，无需重启
-- 🍪 B站 Cookie 状态检测 + **自动刷新**（基于 refresh_token）
-- 🩺 后端健康检测实时显示
-- 🧪 模型连接一键测试
-- 📱 手机端完整适配
+| 维度 / 功能 | 原始版本 (chenluQwQ) | 🚀 增强版 (本项目) |
+| :--- | :--- | :--- |
+| **子评论回复** | 混淆 root/parent，多层对话易变平铺评论 | **精准「楼中楼」嵌套回复**：严格解耦根楼层与父节点，长串讨论自然跟帖 |
+| **@消息交互** | 暂未支持 | **新增独立「@我的」消息流监听**：支持动态与视频评论 @ 自动捕获与防自刷过滤 |
+| **B站私信系统** | 暂未实现 | **全新全套私信模块**：共享记忆人格，自带钓鱼/色情外链隔离防护与自动拉黑 |
+| **主动刷视频** | 仅按固定分区随机拉取，偶发候选数为 0 | **多标签搜刷 + 排除词 + 三级降级保底**：标签不足平滑回退，保证候选池永不落空 |
+| **视频推荐@** | 仅能固定 @ 主人 | **自由 @ 目标选择器**：可指定主人、认识的人，支持多选随机抽取或一键取消 @ |
+| **用户画像管理** | 仅只读展示，保存后不可修改 | **全功能编辑/删除模态框**：支持修改 UID（自动迁移记忆与@）、好感度实时徽章预览 |
+| **主人身份绑定** | 配置易被数据覆盖，偶有硬编码 | **纯动态数据自愈引擎 (`sync_owner_state`)**：配置热更即生效，全代码零硬编码 |
+| **模型生态与容错** | 强依赖外部 Embedding 向量服务 | **弹性解耦**：深度适配 Gemini 3.5/3.1 Flash，Embedding 失效优雅降级 |
+| **工程质量保障** | 暂无自动化测试 | **配备 32 个自动化测试用例（覆盖率 100% 通过）** + Windows 一键启动脚本 |
+
+---
+
+## ✨ 核心增强模块深度解析
+
+### 1. 💬 精准「楼中楼」嵌套定位与 @我的 独立监听
+- **楼中楼层级修复**：依据 B 站底层评论接口协议（参考社区 [bilibili-API-collect](https://github.com/SocialSisterYi/bilibili-API-collect) 规范），重构 `send_reply`，严格将顶层根楼层 `root_id` 与直接对话目标 `parent_id` 拆分解耦。无论是在几百楼的子评论中回复路人，机器人都能精准挂靠在被回复者的下方。
+- **独立 @ 监听机制**：对接 `x/msgfeed/at` 协议流，自动捕获用户在动态、视频各处的 @ 互动，自带已处理去重库、机器人自我识别防自刷与死循环熔断。
+
+### 2. ✉️ 闭环 B站私信安全引擎 (`private_messages.py`)
+- **同质化人格体验**：私信与评论共享同一套世界观、长期向量记忆、好感度与用户档案，聊过天的朋友在私信里依然能被认出。
+- **冷启动安全锚点**：首次启用自动记录当前私信位点，只处理未来产生的新消息，绝不轰炸式翻看历史老消息。
+- **多层防钓鱼隔离与自动拉黑**：
+  - 自动拦截非受信外链、纯 IP 链接、疑似色情/灰产引流文案；
+  - 危险内容直接阻断送入大模型，支持一键调用 B 站真实拉黑；
+  - 配备免拉黑白名单，主人与 Bot 自身始终受豁免保护。
+
+### 3. 🎯 目标标签搜刷与「三级平滑降级」保底系统
+- **智能多标点切分**：采用正则引擎，无缝兼容中文逗号（`，`）、顿号（`、`）、英文逗号（`,`）、分号、空格及换行，粘贴任意格式关键词均可自动识别去重。
+- **排除关键词过滤**：自动过滤带有“广告”、“商业推广”、“带货”等指定负面词的内容。
+- **三级降级兜底保障机制**：
+  $$\text{Tier 1: 目标标签精准检索} \longrightarrow \text{Tier 2: 喜好分区热门视频} \longrightarrow \text{Tier 3: B站全站综合排行榜}$$
+  当冷门标签候选视频不足时，自动放宽条件补充候选池，彻底告别“匹配到 0 个候选视频”导致流程中断的问题。
+
+### 4. 👥 Web 管理面板全功能用户生命周期管理
+- **卡片点击即编辑**：点击任意用户卡片即可唤起编辑模态框，支持修改 UID、B站昵称、机器人称呼、好感度分值、印象与特征事实。
+- **UID 自动安全迁移**：修改用户 UID 时，自动关联迁移其名下的长期记忆数据（`memory.json`）与视频推荐 @ 目标列表，并具备防重复 UID 冲突拦截。
+- **添加认识的人升级**：高颜值毛玻璃弹窗，支持自由输入 0~100 好感度，实时根据分值预览关系等级徽章（陌生人/粉丝/熟人/好友/主人），支持自定义标签拓展。
+
+### 5. 🛡️ 纯动态架构与零硬编码保障
+- 业务代码逻辑中**不存在任何预置硬编码 UID、魔法数字或个人隐私数据**。
+- 主人判定、亲密度校准完全由 `config.json` 动态驱动，即使更换主人账号，系统也会自动执行自愈对齐（`sync_owner_state`），不留任何历史脏数据。
 
 ---
 
 ## 📦 项目结构
 
 ```
-bilibili-ai-bot/
+bilibot/
 ├── ai.py              # 主程序：评论/私信监听、主动行为调度、记忆管理
-├── private_messages.py# 私信轮询、发送、去重与安全判断
-├── bili_login.py      # B站二维码登录
-├── Proactive.py       # 主动刷视频 + 评论模块
+├── private_messages.py# 私信轮询、发送、去重与安全防御引擎
+├── bili_login.py      # B站扫码登录与凭据保存
+├── Proactive.py       # 主动刷视频 + 智能降级兜底 + 评价互动模块
 ├── dynamic.py         # 动态发布模块
-├── local-chat.py      # Flask Web 面板 + 本地聊天后端
-├── chat.html          # Web 前端（聊天 + 管理面板）
-├── config.py          # 配置管理（热更新、Cookie刷新）
-├── config.json        # 运行时配置文件（自动生成，勿上传）
-├── config.example.json# 配置示例
-├── Requirements.txt   # Python 依赖
-├── data/              # 运行时数据（记忆、好感度、日志等）
-└── README.md
+├── local-chat.py      # Flask Web 面板 + 交互式管理 API
+├── chat.html          # 前端管理面板（响应式，支持手机端）
+├── config.py          # 动态配置中心（热更、Cookie 刷新、主人数据自愈）
+├── config.example.json# 公开脱敏配置模板
+├── Requirements.txt   # Python 运行依赖
+├── start_bot.bat      # [Windows] 一键启动主后台监听
+├── start_web.bat      # [Windows] 一键启动 Web 管理面板
+├── start_watch.bat    # [Windows] 一键启动主动刷视频模式
+├── tests/             # 自动化单元测试套件（32 个全通过）
+└── data/              # 运行时数据存储（好感度、记忆、日志等，已 .gitignore）
 ```
 
 ---
@@ -120,13 +95,11 @@ bilibili-ai-bot/
 ## 🚀 快速开始
 
 ### 1. 环境准备
-
 - Python 3.8+
-- 一个 B站账号（可在面板扫码登录，也可手动填写 Cookie）
-- 一个 AI API Key（任何兼容 OpenAI 格式的 API 均可）
-- （可选）Embedding API Key（用于记忆语义检索）
+- Bilibili 账号（支持直接在 Web 面板扫码登录）
+- 兼容 OpenAI 格式的模型 API Key（推荐 Gemini、DeepSeek、Claude 等）
 
-### 2. 安装
+### 2. 克隆与安装
 
 ```bash
 git clone https://github.com/TracyReznik1/bilibot.git
@@ -134,243 +107,82 @@ cd bilibot
 pip install -r Requirements.txt
 ```
 
-### 3. 配置
+### 3. 配置初始化
 
-首次运行会自动生成 `config.json`，也可以提前复制示例：
-
+复制脱敏配置模板：
 ```bash
 cp config.example.json config.json
 ```
+> 💡 强烈建议启动 Web 面板后，在「系统设置」里直接扫码登录与可视化配置。
 
-**最少只需填 4 项：**
+### 4. 一键启动 (Windows / 终端)
 
-```json
-{
-  "SESSDATA": "你的B站SESSDATA",
-  "BILI_JCT": "你的bili_jct",
-  "OR_API_KEY": "你的API Key",
-  "OR_CHAT_MODEL": "你选择的对话模型ID"
-}
-```
+**方式 A：使用预置批处理脚本（推荐）**
+- 双击 `start_web.bat` 启动 Web 控制面板（浏览器访问 `http://127.0.0.1:5000`，默认密码 `admin()`）。
+- 双击 `start_bot.bat` 启动后台常驻监听服务（负责评论、楼中楼回复与私信守护）。
+- 双击 `start_watch.bat` 可手动触发一次主动刷视频与评价。
 
-> 💡 推荐启动面板后，在“系统设置 → B站 Cookie”点击“扫码登录”。也可以粘贴浏览器复制出的整段 Cookie，面板会自动拆分。
-
-`OR_BASE_URL` 和模型 ID 取决于你使用的 API 提供商，填入对应的地址和模型名即可。
-
-其余配置都有默认值，可通过 Web 面板随时修改。
-
-### 4. 启动
-
+**方式 B：命令行启动**
 ```bash
-# 启动评论监听 + 主动行为（后台运行建议用 tmux 或 screen）
+# 终端 1：启动主守护进程
 python ai.py
 
-# 启动 Web 面板（另开一个终端）
+# 终端 2：启动 Web 控制面板
 python local-chat.py
 ```
 
-访问 `http://你的IP:5000`，默认密码 `admin()`。
-
 ---
 
-## 🔧 配置说明
+## 🧪 自动化测试与质量保障
 
-所有配置都可以通过 **Web 面板** 修改，无需编辑文件。以下是主要配置项：
+本项目包含覆盖核心特性的完整自动化测试套件，确保重构后的逻辑高度稳健：
 
-### B站 Cookie
+```bash
+python -m unittest discover tests
+```
 
-| 配置项 | 说明 |
-|--------|------|
-| `SESSDATA` | B站登录凭证 |
-| `BILI_JCT` | CSRF Token |
-| `DEDE_USER_ID` | 用户 UID |
-| `OWNER_MID` | 主人的 UID（好感度永远100） |
-| `REFRESH_TOKEN` | 用于自动刷新 Cookie（可选但推荐） |
-
-> 💡 获取 refresh_token：B站网页 F12 → Console → 输入 `localStorage.getItem('ac_time_value')`
-
-### AI 模型
-
-支持 4 种模型，每种可独立配置 API 地址和 Key：
-
-| 模型类型 | 用途 | 配置项 |
-|---------|------|--------|
-| 对话模型 | 评论回复、本地聊天 | `OR_CHAT_MODEL` |
-| 视觉模型 | 识别图片内容 | `OR_VISION_MODEL` |
-| 搜索模型 | 联网搜索回答 | `OR_SEARCH_MODEL` |
-| 图片生成 | AI 画图、动态配图 | `OR_IMAGE_MODEL` |
-
-每种模型都支持设置**备用模型**（`_FALLBACK` 后缀），主模型失败自动切换。
-
-每种模型还可以单独配置 `_URL` 和 `_KEY`，留空则使用全局默认值。这意味着你可以混合使用不同提供商的模型。
-
-### 功能开关
-
-| 开关 | 说明 | 默认 |
-|------|------|------|
-| `ENABLE_WEB_SEARCH` | 联网搜索 | ✅ |
-| `ENABLE_PROACTIVE` | 主动刷视频和评论 | ✅ |
-| `ENABLE_DYNAMIC` | 自动发动态 | ✅ |
-| `ENABLE_PERSONALITY_EVOLUTION` | 性格成长 | ✅ |
-| `ENABLE_MOOD` | 心情系统 | ✅ |
-| `ENABLE_AFFECTION` | 好感度系统 | ✅ |
-| `ENABLE_PRIVATE_MESSAGES` | 接收B站新私信（首次开启跳过历史） | ❌ |
-| `PRIVATE_MESSAGE_AUTO_REPLY` | 用当前人格自动回复安全私信 | ✅ |
-| `PRIVATE_MESSAGE_AUTO_BLOCK` | 危险私信直接调用B站拉黑 | ✅ |
-
-### 私信安全
-
-| 配置 | 说明 | 默认 |
-|------|------|------|
-| `PRIVATE_MESSAGE_REPLY_SCOPE` | 回复范围：`all` / `owner` / `whitelist` | `all` |
-| `PRIVATE_MESSAGE_REPLY_WHITELIST_UIDS` | `whitelist` 模式下可回复的 UID | `[]` |
-| `PRIVATE_MESSAGE_BLOCK_WHITELIST_UIDS` | 永不自动拉黑的 UID；主人和 Bot 自己始终受保护 | `[]` |
-| `PRIVATE_MESSAGE_TRUSTED_DOMAINS` | 私信允许出现的域名及其子域名 | `bilibili.com,b23.tv` |
-| `PRIVATE_MESSAGE_MAX_MESSAGE_AGE` | 忽略超过该秒数的消息 | `3600` |
-| `PRIVATE_MESSAGE_MAX_PER_POLL` | 单轮最多处理的私信数 | `3` |
-
-> ⚠️ “自动拉黑”属于真实账号操作。私信总开关默认关闭；正式开启前请先正确填写 `OWNER_MID` 和免拉黑名单。关闭自动拉黑后，命中规则的消息仍会被隔离，不会送进 LLM，也不会回复。
-
-### 行为控制
-
-| 配置 | 说明 | 默认 |
-|------|------|------|
-| `PROACTIVE_VIDEO_COUNT` | 每天刷几个视频 | 3 |
-| `PROACTIVE_COMMENT_COUNT` | 每天评论几条 | 2 |
-| `PROACTIVE_TIMES_COUNT` | 每天触发几次 | 2 |
-| `SLEEP_START` ~ `SLEEP_END` | 休眠时间段 | 2:00 ~ 8:00 |
-
-### 自定义提示词
-
-面板中可编辑 7 个提示词模板：
-
-- 💬 对话回复提示词（在人格中配置）
-- 📢 主动评论提示词
-- 📹 视频评价提示词
-- 🌱 性格演化提示词
-- 🔍 搜索前缀提示词
-- 📝 动态发布提示词
-- 🎨 AI 画图提示词
-
----
-
-## 🍪 Cookie 自动刷新
-
-B站 Cookie 会定期过期，本项目支持**全自动刷新**：
-
-1. 在面板扫码登录（会自动保存 `REFRESH_TOKEN`），或手动填入
-2. 后台每 6 小时自动检查 Cookie 状态
-3. B站提示需要刷新时，自动用 RSA 加密完成 5 步刷新流程
-4. 新 Cookie 自动写入配置，无需人工干预
-
-也可以在面板中手动点击「自动刷新」按钮。
-
----
-
-## 🛡️ 安全机制
-
-- 🚫 关键词过滤：自动屏蔽包含不良关键词的评论
-- 📉 好感度惩罚：辱骂性评论扣减好感度
-- 🔒 自动拉黑：好感度降至 -30 或连续辱骂 5 次，自动调用 B站 API 拉黑
-- 📋 安全日志：所有屏蔽、拉黑事件记录在案
-- 🔑 面板密码保护：防止未授权访问
-
----
-
-## 📱 手机端
-
-Web 面板完整适配手机浏览器：
-
-- 侧边栏滑出式菜单
-- 聊天界面全屏优化
-- 设置表单触屏友好
-- 兼容 iPhone SE 等小屏设备
-
----
-
-## 🤝 兼容性
-
-### API 提供商
-
-任何兼容 **OpenAI API 格式**的提供商均可使用，包括但不限于：
-
-- 各类 API 聚合平台
-- 各大模型官方 API（Claude、Gemini、GPT、Qwen 等）
-- 自建 API 代理 / 中转站
-
-只需在面板中填入对应的 `Base URL`、`API Key` 和 `模型 ID` 即可。
-
-### 模型选择建议
-
-| 模型类型 | 选择要点 |
-|---------|---------|
-| 对话模型 | 角色扮演和中文能力强的模型效果更好 |
-| 视觉模型 | 需要支持图片输入的多模态模型 |
-| 搜索模型 | 需要支持联网搜索（online）的模型 |
-| 图片生成 | 需要支持图片输出的模型 |
-| Embedding | 支持中文的 embedding 模型（用于记忆检索） |
-
----
-
-## ❓ 常见问题
-
-**Q: Cookie 多久过期一次？**
-A: 有效期会随账号和B站策略变化。扫码登录会同时保存 `refresh_token`；需要刷新时可在面板续期，失效后重新扫码即可。
-
-**Q: 不填 Embedding API Key 会怎样？**
-A: 记忆系统的语义检索功能不可用，但其他功能正常。
-
-**Q: 可以用免费模型吗？**
-A: 可以，只要兼容 OpenAI API 格式就行。但回复质量和角色扮演能力取决于模型本身的能力。
-
-**Q: 怎么让 Bot 只回复特定视频的评论？**
-A: 目前 Bot 会监听你账号下所有视频的新评论。如需限制范围，可修改 `ai.py` 中的评论获取逻辑。
-
-**Q: 启动后没有回复评论？**
-A: 检查以下几点：
-1. Cookie 是否有效（面板中检查状态）
-2. 是否在休眠时间段内（默认 2:00-8:00 不工作）
-3. 是否有新评论（Bot 只回复启动后的新评论）
-4. 终端日志是否有报错
+- `tests/test_enhanced_replies.py`：验证楼中楼 `root/parent` 参数拆分与 @消息 去重机制。
+- `tests/test_proactive_filtering_and_fallback.py`：验证多标点智能切分、排除词拦截与全站热门降级。
+- `tests/test_user_management_edit.py`：验证用户卡片编辑、UID 变更连带记忆迁移与主人防删保护。
+- `tests/test_owner_sync_and_mentions.py`：验证动态主人数据自愈对齐与视频推荐 @ 目标选择器。
+- `tests/test_private_messages.py`：验证私信时间戳过滤、站内视频卡片解析与防钓鱼外链隔离。
 
 ---
 
 ## 📜 开源协议与免责声明
 
 ### 开源协议 (License)
-本项目采用 [MIT License](LICENSE) 开源。您可以自由使用、复制、修改、合并、发布、分发、再许可或销售本项目副本，但需保留原作者版权声明及许可声明。
+本项目采用 [MIT License](LICENSE) 开源，允许任何个人或团队自由学习、修改和分发，但需保留原作者版权声明及本声明。
 
 ### 免责声明 (Disclaimer)
-1. 本项目仅供技术研究与学习交流，禁止用于任何商业牟利、非法爬取、网络攻击或侵犯他人隐私之用途。
-2. 使用本项目需严格遵守各大平台服务协议及相关法律法规。因使用本项目产生的一切法律后果与账号风控风险均由使用者自行承担，与本项目贡献者无关。
+1. 本项目仅供 Python 自动化与 AI Agent 架构研究交流，严禁用于任何商业牟利、恶意爬虫、网络攻击或侵犯他人隐私之用途。
+2. 使用本项目需自觉遵守《哔哩哔哩弹幕网用户使用协议》及国家相关法律法规。因使用不当导致账号被风控、封禁等后果，均由使用者自行承担。
 3. 请妥善保管好个人凭证（API 密钥、Cookies 等），严禁公开分享包含真实个人凭证与敏感数据的 `config.json` 或 `data/` 目录。
 
 ---
 
 ## 💡 鸣谢与第三方开源项目声明
 
-本项目站在开源社区巨人的肩膀上构建，感谢以下优秀的开源项目与技术支持（遵循各项目的原始开源许可协议）：
+本项目站在开源社区巨人的肩膀上构建，衷心致谢以下优秀的开源项目与技术规范：
 
-| 开源项目 / 依赖组件 | 许可证类型 | 官方主页 / 仓库 | 说明与用途 |
+| 开源项目 / 依赖规范 | 许可证类型 | 官方主页 / 仓库 | 说明与用途 |
 | :--- | :---: | :--- | :--- |
-| **Flask** | BSD-3-Clause | [pallets/flask](https://github.com/pallets/flask) | 核心轻量级 Web 服务面板与管理 API 路由 |
-| **OpenAI Python SDK** | Apache-2.0 | [openai/openai-python](https://github.com/openai/openai-python) | 标准化 LLM 模型客户端接口（兼容各大模型服务） |
-| **Requests** | Apache-2.0 | [psf/requests](https://github.com/psf/requests) | 稳定高效的 HTTP 客户端请求与通信 |
-| **yt-dlp** | The Unlicense | [yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp) | 视频与音视频流下载提取引擎 |
-| **Pillow (PIL)** | HPND | [python-pillow/Pillow](https://github.com/python-pillow/Pillow) | 图像处理、动态封面生成与扫码二维码渲染 |
+| **bilibili-ai-bot** | MIT | [chenluQwQ/bilibili-ai-bot](https://github.com/chenluQwQ/bilibili-ai-bot) | **原项目致敬**：奠定了早期版本的基础框架与原型设计 |
+| **bilibili-API-collect** | MIT | [SocialSisterYi/bilibili-API-collect](https://github.com/SocialSisterYi/bilibili-API-collect) | **协议规范参考**：B站评论/私信/WBI 等核心接口逆向规范与楼中楼协议 |
+| **Flask** | BSD-3-Clause | [pallets/flask](https://github.com/pallets/flask) | 轻量级 Web 交互面板与后端管理 RESTful API 驱动 |
+| **OpenAI Python SDK** | Apache-2.0 | [openai/openai-python](https://github.com/openai/openai-python) | 标准化 LLM 模型客户端接口抽象与多模态交互 |
+| **Requests** | Apache-2.0 | [psf/requests](https://github.com/psf/requests) | 高性能 HTTP 客户端网络请求库 |
+| **yt-dlp** | The Unlicense | [yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp) | 视频与音视频流下载提取与本地帧解析 |
+| **Pillow (PIL)** | HPND | [python-pillow/Pillow](https://github.com/python-pillow/Pillow) | 图像处理、动态配图生成与二维码渲染 |
 | **qrcode** | BSD-3-Clause | [lincolnloop/python-qrcode](https://github.com/lincolnloop/python-qrcode) | B 站登录二维码生成与终端/Web 呈现 |
-| **cryptography** | Apache-2.0 / BSD | [pyca/cryptography](https://github.com/pyca/cryptography) | 安全加解密（RSA 加密用于 B 站 Cookie 自动续期） |
-| **Google Generative AI** | Apache-2.0 | [google-gemini/generative-ai-python](https://github.com/google-gemini/generative-ai-python) | Gemini 多模态视觉与对话模型官方 SDK 支持 |
-| **lunardate** | MIT | [yllan/lunardate](https://github.com/yllan/lunardate) | 农历日期计算与节假日动态生成辅助 |
-| **Bilibili WBI 社区算法** | MIT | 社区逆向开源标准规范 | B 站防风控 WBI 签名混淆与接口鉴权算法 |
-| **bilibili-ai-bot (Upstream)** | MIT | [chenluQwQ/bilibili-ai-bot](https://github.com/chenluQwQ/bilibili-ai-bot) | 早期版本架构设计与原型启发 |
+| **cryptography** | Apache-2.0 / BSD | [pyca/cryptography](https://github.com/pyca/cryptography) | RSA 加密算法，用于 B 站 Cookie 全自动刷新续期 |
+| **Google Generative AI** | Apache-2.0 | [google-gemini/generative-ai-python](https://github.com/google-gemini/generative-ai-python) | Gemini 多模态视觉与轻量化模型支持 |
+| **lunardate** | MIT | [yllan/lunardate](https://github.com/yllan/lunardate) | 农历日期算法与节假日动态生成支撑 |
 
 ---
 
 ## 🌟 Star
 
-如果觉得对你有帮助，欢迎在 [GitHub](https://github.com/TracyReznik1/bilibot) 点一个 Star ⭐！
+如果本项目对你的 AI 探索有所启发，欢迎在 [GitHub](https://github.com/TracyReznik1/bilibot) 点一个 Star ⭐！
 
-遇到问题或有新想法，欢迎提交 Issue 或 Pull Request。
-
-> 🤖 让每个 B站 UP主都能拥有一个有记忆、有感情、会成长的 AI 伙伴。
+欢迎提交 Issue 或 Pull Request，一起让 B 站 AI 伴侣更加生动！

@@ -26,3 +26,4 @@
 | Feature: Multi-tier fallback to partition & hot videos in Proactive.py | Completed | Added get_popular_videos and fallback replenishment from partitions and Bilibili hot list |
 | Feature: Multi-delimiter input support in chat.html | Completed | Added regex-based multi-delimiter parsing in saveProactiveUIDs and formatted display in loadSchedule |
 | Feature: Unit tests & verification for tag parsing and fallback | Completed | Added unit tests for multi-delimiter tags, any-match, and popular fallback; full 32 tests passed |
+| Release: Open-source notices, desensitization & push to GitHub | Completed | Configured MIT license, third-party acknowledgments, sanitized code and pushed to TracyReznik1/bilibot |

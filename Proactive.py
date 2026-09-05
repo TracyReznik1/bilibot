@@ -6,8 +6,16 @@ import subprocess
 import os
 import base64
 import re
+import sys
 from datetime import datetime, timedelta
 from openai import OpenAI
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 # ========== 配置 ==========
 from config import *
@@ -41,8 +49,8 @@ headers = {
 }
 
 or_client = OpenAI(
-    api_key=OR_API_KEY,
-    base_url=OR_BASE_URL
+    api_key=OR_API_KEY or "not_set",
+    base_url=OR_BASE_URL or "https://generativelanguage.googleapis.com/v1beta/openai/"
 )
 
 # ========== 工具函数 ==========
@@ -285,6 +293,176 @@ def get_video_info(bvid):
         "up_mid": d["owner"]["mid"],
         "pic": d["pic"]
     }
+
+def get_video_tags(bvid):
+    """获取视频的标签列表"""
+    url = "https://api.bilibili.com/x/tag/archive/tags"
+    params = {"bvid": bvid}
+    try:
+        resp = requests.get(url, headers=headers, params=params, timeout=10)
+        data = resp.json()
+        if data.get("code") == 0:
+            return [t.get("tag_name", "").strip() for t in data.get("data", []) if t.get("tag_name")]
+    except Exception:
+        pass
+    return []
+
+def parse_tag_list(raw_val):
+    """
+    智能解析标签/关键词列表：
+    兼容中文逗号（，）、顿号（、）、英文逗号（,）、分号（;；）、空格及换行。
+    支持传入字符串或列表，自动去除空项并保持唯一性。
+    """
+    if not raw_val:
+        return []
+    if isinstance(raw_val, str):
+        items = [raw_val]
+    elif isinstance(raw_val, (list, tuple, set)):
+        items = [str(x) for x in raw_val if x is not None]
+    else:
+        items = [str(raw_val)]
+
+    result = []
+    seen = set()
+    for item in items:
+        parts = re.split(r'[,，、;；\s\n]+', str(item).strip())
+        for p in parts:
+            p_clean = p.strip()
+            if p_clean and p_clean.lower() not in seen:
+                seen.add(p_clean.lower())
+                result.append(p_clean)
+    return result
+
+def get_popular_videos(max_count=20):
+    """获取B站综合热门排行榜视频（用于无匹配时的降级兜底）"""
+    url = "https://api.bilibili.com/x/web-interface/popular"
+    params = {"pn": 1, "ps": max_count}
+    videos = []
+    try:
+        resp = requests.get(url, headers=headers, params=params, timeout=10)
+        data = resp.json()
+        if data.get("code") == 0:
+            for v in data.get("data", {}).get("list", []):
+                stat = v.get("stat", {})
+                play = stat.get("view", 0)
+                try:
+                    play = int(play)
+                except (ValueError, TypeError):
+                    play = 0
+                videos.append({
+                    "bvid": v.get("bvid", ""),
+                    "title": v.get("title", ""),
+                    "desc": v.get("desc", ""),
+                    "up_name": v.get("owner", {}).get("name", ""),
+                    "up_mid": v.get("owner", {}).get("mid", 0),
+                    "pubdate": safe_pubdate(v.get("pubdate", 0)),
+                    "pic": v.get("pic", ""),
+                    "view": play
+                })
+    except Exception as e:
+        print(f"  ⚠️ 获取全站热门视频异常：{e}")
+    return videos
+
+def get_videos_by_tag(tag, max_count=15):
+    """根据固定标签/关键词直接搜索高相关性视频"""
+    if not tag or not str(tag).strip():
+        return []
+    tag = str(tag).strip()
+    videos = []
+    # 搜索尝试：先综合排序，再最新发布
+    for order in ["totalrank", "pubdate"]:
+        if len(videos) >= max_count:
+            break
+        try:
+            params = sign_wbi_params({
+                "search_type": "video",
+                "keyword": tag,
+                "order": order,
+                "page": 1,
+                "pagesize": max_count
+            })
+            url = "https://api.bilibili.com/x/web-interface/wbi/search/type"
+            resp = requests.get(url, headers=headers, params=params, timeout=10)
+            data = resp.json()
+            if data.get("code") == 0:
+                results = data.get("data", {}).get("result", [])
+                for v in results:
+                    bvid = v.get("bvid", "")
+                    if not bvid:
+                        continue
+                    clean_title = re.sub(r'<[^>]+>', '', v.get("title", ""))
+                    raw_tags = [t.strip() for t in v.get("tag", "").split(",") if t.strip()]
+                    play_val = v.get("play", 0)
+                    try:
+                        play = int(play_val)
+                    except (ValueError, TypeError):
+                        play = 0
+                    videos.append({
+                        "bvid": bvid,
+                        "title": clean_title,
+                        "desc": v.get("description", v.get("desc", "")),
+                        "up_name": v.get("author", ""),
+                        "up_mid": v.get("mid", 0),
+                        "pubdate": safe_pubdate(v.get("pubdate", 0)),
+                        "pic": v.get("pic", ""),
+                        "view": play,
+                        "tags": raw_tags,
+                        "matched_reason": f"搜索标签: {tag}"
+                    })
+        except Exception as e:
+            print(f"  ⚠️ 标签搜索【{tag}】异常：{e}")
+    return videos
+
+def match_video_filter(video, target_tags, exclude_keywords):
+    """
+    检查视频是否符合标题/标签过滤规则
+    返回: (bool, matched_reason)
+    """
+    target_tags = parse_tag_list(target_tags)
+    exclude_keywords = parse_tag_list(exclude_keywords)
+
+    title = str(video.get("title", "")).lower()
+    desc = str(video.get("desc", "")).lower()
+    raw_tags = video.get("tags")
+    tags = [str(t).lower() for t in raw_tags] if raw_tags is not None else []
+
+    # 1. 检查排除关键词
+    for ek in exclude_keywords:
+        ek_str = str(ek).strip().lower()
+        if not ek_str:
+            continue
+        if ek_str in title or ek_str in desc or any(ek_str in t for t in tags):
+            return False, f"命中排除词: {ek}"
+
+    # 2. 如果未设定目标标签，则全部通过
+    if not target_tags:
+        return True, "未限定标签"
+
+    # 3. 如果标题或简介已命中目标标签，直接通过，减少网络请求
+    for tt in target_tags:
+        tt_str = str(tt).strip().lower()
+        if not tt_str:
+            continue
+        if tt_str in title:
+            return True, f"标题命中: {tt}"
+        if any(tt_str in t for t in tags):
+            return True, f"标签命中: {tt}"
+        if tt_str in desc:
+            return True, f"简介命中: {tt}"
+
+    # 4. 如果标题和简介未命中，且之前尚未获取 tags，在线查一次视频标签
+    if raw_tags is None and video.get("bvid"):
+        fetched_tags = get_video_tags(video["bvid"])
+        video["tags"] = fetched_tags
+        tags = [t.lower() for t in fetched_tags]
+        for tt in target_tags:
+            tt_str = str(tt).strip().lower()
+            if not tt_str:
+                continue
+            if any(tt_str in t for t in tags):
+                return True, f"标签命中: {tt}"
+
+    return False, "未命中目标标签"
 
 # ========== 视频下载和分析 ==========
 def download_video(bvid):
@@ -669,11 +847,12 @@ def run():
     generate_cookies_file()
 
     # 检查今天是否已经刷过B站了
+    force = "--force" in sys.argv or "-f" in sys.argv
     watch_log = load_json(WATCH_LOG_FILE, [])
     today_str = datetime.now().strftime("%Y-%m-%d")
     today_watched = [l for l in watch_log if l.get("time", "").startswith(today_str)]
-    if len(today_watched) >= DAILY_WATCH_COUNT:
-        print(f"📌 今天已经看了 {len(today_watched)} 个视频，不再重复刷B站")
+    if len(today_watched) >= DAILY_WATCH_COUNT and not force:
+        print(f"📌 今天已经看了 {len(today_watched)} 个视频，达到每日上限（如需立即继续刷，可运行：python Proactive.py --force）")
         return
 
     print(f"🎯 Bot刷B站模式启动 | 今日目标：看 {DAILY_WATCH_COUNT} 个视频，评论 {DAILY_COMMENT_COUNT} 条")
@@ -691,47 +870,84 @@ def run():
     # 2025年过滤线
     min_pubdate = int(datetime(2025, 1, 1).timestamp())
 
+    from config import get_raw_config
+    raw_cfg = get_raw_config()
+    target_tags = parse_tag_list(raw_cfg.get("PROACTIVE_TAGS", []))
+    exclude_keywords = parse_tag_list(raw_cfg.get("PROACTIVE_EXCLUDE_KEYWORDS", []))
+
     target_videos = []
 
-    # 1. 特别关心的UP主（必回）
+    # 1. 固定目标标签/关键词精准搜索（优先级最高）
+    if target_tags:
+        print(f"🎯 已启用固定目标标签/关键词：{'、'.join(target_tags)}")
+        for tag in target_tags:
+            print(f"🔍 搜索标签/关键词内容：【{tag}】...")
+            tag_videos = get_videos_by_tag(tag, max_count=8)
+            matched_count = 0
+            for v in tag_videos:
+                if v["bvid"] not in watched_bvids:
+                    pubdate = safe_pubdate(v.get("pubdate", 0))
+                    if pubdate and pubdate < min_pubdate:
+                        continue
+                    ok, reason = match_video_filter(v, target_tags, exclude_keywords)
+                    if ok:
+                        v["matched_reason"] = reason
+                        target_videos.append(v)
+                        matched_count += 1
+            print(f"  ✨ 【{tag}】匹配到 {matched_count} 个候选视频")
+            time.sleep(random.uniform(0.2, 0.5))
+
+    # 2. 特别关心的UP主（必回/优先看）
     print("📌 检查特别关心的UP主...")
-    from config import get_raw_config
-    special_mids = get_raw_config().get("PROACTIVE_FOLLOW_UIDS", [])
+    special_mids = raw_cfg.get("PROACTIVE_FOLLOW_UIDS", [])
+    special_videos = []
     for mid in special_mids:
         video = get_up_latest_video(mid)
         three_months_ago = datetime.now() - timedelta(days=90)
         if video and video["bvid"] not in watched_bvids:
             pubdate = safe_pubdate(video.get("pubdate", 0))
             if pubdate and pubdate >= min_pubdate and datetime.fromtimestamp(pubdate) >= three_months_ago:
-                target_videos.insert(0, video)
-                print(f"  ⭐ 特别关心：{video['up_name']} - {video['title']}")
+                ok, reason = match_video_filter(video, target_tags, exclude_keywords)
+                if ok:
+                    video["matched_reason"] = f"特别关心 ({reason})"
+                    special_videos.append(video)
+                    print(f"  ⭐ 特别关心：{video['up_name']} - {video['title']} [{reason}]")
+                else:
+                    print(f"  ⏭️ 特别关心跳过（{reason}）：{video['up_name']} - {video['title']}")
             elif pubdate and pubdate < min_pubdate:
                 print(f"  ⏭️ 跳过（2025年前）：{video['up_name']} - {video['title']}")
 
-   # 2. 关注的UP主
+    # 3. 关注的UP主
     print("👥 检查关注的UP主...")
     following_mids = get_followings()
     today = datetime.now().date()
+    following_videos = []
     for mid in following_mids:
         video = get_up_latest_video(mid)
-        time.sleep(random.uniform(0.5, 1.5))
+        time.sleep(random.uniform(0.2, 0.5))
         if video and video["bvid"] not in watched_bvids:
             pubdate = safe_pubdate(video.get("pubdate", 0))
             if pubdate and pubdate < min_pubdate:
                 continue  # 跳过2025年前的视频
             is_today = pubdate and datetime.fromtimestamp(pubdate).date() == today
-            if is_today:
-                target_videos.insert(0, video)
-                video["_today"] = True
-                print(f"  🔔 今日更新：{video['up_name']} - {video['title']}")
-            else:
-                print(f"  👤 {video['up_name']} - {video['title']}（非今日）")
+            ok, reason = match_video_filter(video, target_tags, exclude_keywords)
+            if ok:
+                video["matched_reason"] = reason
+                if is_today:
+                    video["_today"] = True
+                    following_videos.insert(0, video)
+                    print(f"  🔔 今日更新：{video['up_name']} - {video['title']} [{reason}]")
+                else:
+                    following_videos.append(video)
+                    print(f"  👤 关注UP主：{video['up_name']} - {video['title']} [{reason}]")
 
-    # 3. 喜好分区热门视频
+    # 4. 喜好分区热门视频（若候选池未满则补充，优先做标签筛选）
     print("🔥 获取分区热门视频...")
-    random.shuffle(PREFERRED_TIDS)
-    for tid in PREFERRED_TIDS:
-        if len(target_videos) >= DAILY_WATCH_COUNT + 5:
+    preferred_tids = list(PREFERRED_TIDS)
+    random.shuffle(preferred_tids)
+    hot_matched_videos = []
+    for tid in preferred_tids:
+        if len(target_videos) + len(special_videos) + len(following_videos) + len(hot_matched_videos) >= DAILY_WATCH_COUNT + 10:
             break
         hot_videos = get_hot_videos_by_tid(tid)
         for v in hot_videos:
@@ -739,24 +955,88 @@ def run():
                 pubdate = safe_pubdate(v.get("pubdate", 0))
                 if pubdate and pubdate < min_pubdate:
                     continue  # 跳过2025年前的视频
-                target_videos.append(v)
+                ok, reason = match_video_filter(v, target_tags, exclude_keywords)
+                if ok:
+                    v["matched_reason"] = reason
+                    hot_matched_videos.append(v)
+
+    # 候选池优先级合并：特别关心 > 标签专属视频 > 关注UP主 > 标签命中的分区热门
+    candidate_pool = special_videos + target_videos + following_videos + hot_matched_videos
 
     # 去重
     seen = set()
     unique_videos = []
-    for v in target_videos:
+    for v in candidate_pool:
         if v["bvid"] not in seen:
             seen.add(v["bvid"])
             unique_videos.append(v)
 
-    # 随机打乱
-    special_count = len(special_mids)
-    if len(unique_videos) > special_count:
-        tail = unique_videos[special_count:]
-        random.shuffle(tail)
-        unique_videos = unique_videos[:special_count] + tail
+    # 5. 梯度降级兜底保障（若候选视频不足 DAILY_WATCH_COUNT，放宽标签限制，自动从分区热门与全站热门补充）
+    fallback_videos = []
+    needed_count = DAILY_WATCH_COUNT - len(unique_videos)
+    if needed_count > 0:
+        print(f"⚠️ 标签精准匹配视频数量不足 ({len(unique_videos)}/{DAILY_WATCH_COUNT})，触发分区热门降级兜底...")
+        for tid in preferred_tids:
+            if len(fallback_videos) >= needed_count + 5:
+                break
+            try:
+                part_videos = get_hot_videos_by_tid(tid)
+                for v in part_videos:
+                    if v["bvid"] not in watched_bvids and v["bvid"] not in seen:
+                        pubdate = safe_pubdate(v.get("pubdate", 0))
+                        if pubdate and pubdate < min_pubdate:
+                            continue
+                        # 仅过滤排除词，不再限制目标标签
+                        passed_exclude = True
+                        for ek in exclude_keywords:
+                            if ek.lower() in str(v.get("title", "")).lower() or ek.lower() in str(v.get("desc", "")).lower():
+                                passed_exclude = False
+                                break
+                        if passed_exclude:
+                            v["matched_reason"] = "喜好分区热门 (降级兜底)"
+                            fallback_videos.append(v)
+                            seen.add(v["bvid"])
+                            if len(fallback_videos) >= needed_count + 5:
+                                break
+            except Exception as e:
+                print(f"  ⚠️ 分区兜底获取异常 (tid={tid}): {e}")
 
-    print(f"📋 共找到 {len(unique_videos)} 个视频")
+        # 若分区仍然不足，触发全站综合热门排行榜兜底
+        if len(unique_videos) + len(fallback_videos) < DAILY_WATCH_COUNT:
+            print("⚠️ 分区视频依然不足，触发全站综合热门降级兜底...")
+            try:
+                pop_videos = get_popular_videos(max_count=20)
+                for v in pop_videos:
+                    if v["bvid"] not in watched_bvids and v["bvid"] not in seen:
+                        pubdate = safe_pubdate(v.get("pubdate", 0))
+                        if pubdate and pubdate < min_pubdate:
+                            continue
+                        passed_exclude = True
+                        for ek in exclude_keywords:
+                            if ek.lower() in str(v.get("title", "")).lower() or ek.lower() in str(v.get("desc", "")).lower():
+                                passed_exclude = False
+                                break
+                        if passed_exclude:
+                            v["matched_reason"] = "全站热门 (降级兜底)"
+                            fallback_videos.append(v)
+                            seen.add(v["bvid"])
+                            if len(unique_videos) + len(fallback_videos) >= DAILY_WATCH_COUNT:
+                                break
+            except Exception as e:
+                print(f"  ⚠️ 全站热门兜底异常: {e}")
+
+        if fallback_videos:
+            print(f"  🛡️ 降级兜底成功补充 {len(fallback_videos)} 个候选视频")
+            unique_videos.extend(fallback_videos)
+
+    # 适当随机打乱非特别关心的候选视频，保持自然多样性
+    sp_count = len(special_videos)
+    if len(unique_videos) > sp_count:
+        tail = unique_videos[sp_count:]
+        random.shuffle(tail)
+        unique_videos = unique_videos[:sp_count] + tail
+
+    print(f"📋 共筛选出 {len(unique_videos)} 个符合条件的视频")
 
     watch_count = 0
     comment_count = 0
@@ -771,8 +1051,9 @@ def run():
         if str(video.get("up_mid", "")) == DEDE_USER_ID:
             continue
 
+        reason_info = f" | 命中: {video.get('matched_reason', '')}" if video.get("matched_reason") else ""
         print(f"\n{'='*50}")
-        print(f"🎬 [{watch_count+1}/{DAILY_WATCH_COUNT}] {video['title']} by {video['up_name']}")
+        print(f"🎬 [{watch_count+1}/{DAILY_WATCH_COUNT}] {video['title']} by {video['up_name']}{reason_info}")
 
         # 下载视频
         video_path = download_video(bvid)
@@ -869,50 +1150,75 @@ def run():
                     })
                     save_json("data/proactive_log.json", proactive_log[-100:])
 
-            # 推荐给主人
+            # 推荐给选中的人（主人、认识的人，或全部取消则不@）
             if evaluation.get("recommend_owner", False) and oid:
                 from config import get_raw_config as _grc3
                 _rcfg = _grc3()
-                _owner_bili = _rcfg.get("OWNER_BILI_NAME", "")
-                _owner_name = _rcfg.get("OWNER_NAME", "") or "主人"
-                if _owner_bili:
-                    # 让AI生成一条自然的推荐语（带人设）
-                    try:
-                        # 读取人设
-                        _active = _rcfg.get("ACTIVE_PERSONA", "default")
-                        _personas = load_json("data/personas.json", [])
-                        _p = next((p for p in _personas if p.get("name") == _active), None)
-                        _persona_text = (_p.get("system_prompt", "") if _p else "")[:500]
-                        
-                        if _persona_text:
-                            _rec_system = _persona_text
-                        else:
-                            _bot_name = _rcfg.get("BOT_NAME", "霜序")
-                            _rec_system = f"你是{_bot_name}，说话自然有个性。"
-                        
-                        _rec_prompt = f"""你刚看完视频「{video.get('title', '')}」，觉得很不错想推荐给{_owner_name}。
+                _owner_mid = str(_rcfg.get("OWNER_MID", "")).strip()
+                _owner_bili = _rcfg.get("OWNER_BILI_NAME", "").strip()
+                _owner_name = _rcfg.get("OWNER_NAME", "").strip() or "主人"
+
+                _raw_targets = _rcfg.get("PROACTIVE_MENTION_TARGETS", None)
+                _mention_random = _rcfg.get("PROACTIVE_MENTION_RANDOM", False)
+
+                # 默认未特别指定时，默认目标为主人的 UID
+                if _raw_targets is None:
+                    _targets = [_owner_mid] if _owner_mid and _owner_mid != "0" else []
+                else:
+                    _targets = [str(t).strip() for t in _raw_targets if str(t).strip()]
+
+                # 若全部取消勾选（空列表），则不@任何人
+                if not _targets:
+                    print("  💬 @推荐目标未选择任何人，跳过@操作")
+                else:
+                    # 确定本次推荐的目标 UID
+                    if _mention_random and len(_targets) > 1:
+                        target_uid = random.choice(_targets)
+                    else:
+                        target_uid = _targets[0]
+
+                    # 动态获取目标的昵称与称呼
+                    _profiles = load_json("data/user_profiles.json", {})
+                    target_profile = _profiles.get(str(target_uid), {})
+                    if str(target_uid) == _owner_mid:
+                        target_bili = _owner_bili or _owner_name
+                        target_display = f"主人({_owner_name})"
+                    else:
+                        target_bili = target_profile.get("name") or target_profile.get("nickname") or f"UID_{target_uid}"
+                        target_display = target_bili
+
+                    if target_bili:
+                        try:
+                            _active = _rcfg.get("ACTIVE_PERSONA", "default")
+                            _personas = load_json("data/personas.json", [])
+                            _p = next((p for p in _personas if p.get("name") == _active), None)
+                            _persona_text = (_p.get("system_prompt", "") if _p else "")[:500]
+                            _bot_name = _rcfg.get("BOT_NAME", "Bot")
+                            _rec_system = _persona_text if _persona_text else f"你是{_bot_name}，说话自然有个性。"
+
+                            _rec_prompt = f"""你刚看完视频「{video.get('title', '')}」，觉得很不错想推荐给{target_display}。
 写一句简短的推荐语，要求：
 - 用你自己的语气，自然随意
 - 不超过25字
 - 不要带@、不要带任何人名或称呼
 - 直接输出推荐语"""
-                        _rec_resp = or_client.chat.completions.create(
-                            model=OR_CHAT_MODEL, max_tokens=60,
-                            messages=[
-                                {"role": "system", "content": _rec_system},
-                                {"role": "user", "content": _rec_prompt}
-                            ]
-                        )
-                        rec_text = _rec_resp.choices[0].message.content.strip()
-                        # 清理可能残留的@和称呼
-                        rec_text = re.sub(r'@\S+\s*', '', rec_text)
-                        rec_text = re.sub(r'^(主人|柠弥|亲爱的)[，,\s]*', '', rec_text)
-                    except:
-                        rec_text = evaluation.get("recommend_reason", "你可能会喜欢这个")
-                    rec_msg = f"@{_owner_bili} {rec_text}"
-                    if send_comment(oid, rec_msg):
-                        actions.append("📢推荐给主人")
-                        print(f"  📢 已@主人：{rec_msg}")
+                            _rec_resp = or_client.chat.completions.create(
+                                model=OR_CHAT_MODEL, max_tokens=60,
+                                messages=[
+                                    {"role": "system", "content": _rec_system},
+                                    {"role": "user", "content": _rec_prompt}
+                                ]
+                            )
+                            rec_text = _rec_resp.choices[0].message.content.strip()
+                            rec_text = re.sub(r'@\S+\s*', '', rec_text)
+                            rec_text = re.sub(r'^(主人|亲爱的)[，,\s]*', '', rec_text)
+                        except Exception:
+                            rec_text = evaluation.get("recommend_reason", "你可能会喜欢这个")
+
+                        rec_msg = f"@{target_bili} {rec_text}"
+                        if send_comment(oid, rec_msg):
+                            actions.append(f"📢推荐给{target_display}")
+                            print(f"  📢 已@{target_bili}：{rec_msg}")
 
         # 关注UP主：>=9分 或 评价里want_follow
         if (score >= 9 or want_follow) and PROACTIVE_FOLLOW and str(video.get("up_mid", "")) != str(OWNER_MID):

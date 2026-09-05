@@ -11,6 +11,13 @@ from datetime import datetime
 from openai import OpenAI
 from lunardate import LunarDate
 
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 # 获取当前Python解释器路径和脚本所在目录（兼容Docker环境）
 PYTHON = sys.executable
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -24,7 +31,8 @@ from private_messages import (
     reply_scope_allows,
 )
 
-POLL_INTERVAL = 20
+from config import get_raw_config
+POLL_INTERVAL = int(get_raw_config().get("POLL_INTERVAL", 60))
 
 # 生成随机触发时间（每天自动重置）
 SCHEDULE_FILE = "data/schedule_today.json"
@@ -116,12 +124,12 @@ headers = {
 }
 
 or_client = OpenAI(
-    api_key=OR_API_KEY,
-    base_url=OR_BASE_URL
+    api_key=OR_API_KEY or "not_set",
+    base_url=OR_BASE_URL or "https://generativelanguage.googleapis.com/v1beta/openai/"
 )
 
 embed_client = OpenAI(
-    api_key=SILICON_API_KEY,
+    api_key=SILICON_API_KEY or "not_set",
     base_url="https://api.siliconflow.cn/v1"
 )
 
@@ -498,10 +506,39 @@ def get_festival_prompt():
 
 # ========== 向量记忆系统 ==========
 def get_embedding(text):
-    resp = embed_client.embeddings.create(model="BAAI/bge-m3", input=text)
-    return resp.data[0].embedding
+    if not text:
+        return None
+    from config import get_raw_config
+    cfg = get_raw_config()
+    silicon_key = cfg.get("SILICON_API_KEY", "").strip()
+
+    # 1. 优先尝试配置的 SiliconFlow API
+    if silicon_key and silicon_key != "not_set":
+        try:
+            model_name = cfg.get("EMBED_MODEL", "").strip() or "BAAI/bge-m3"
+            resp = embed_client.embeddings.create(model=model_name, input=text)
+            if resp and resp.data:
+                return resp.data[0].embedding
+        except Exception as e:
+            # 记录警告但不阻断主业务
+            pass
+
+    # 2. 如果未配置 SiliconFlow 或报错，尝试使用主模型 API (Gemini text-embedding-004)
+    or_key = cfg.get("OR_API_KEY", "").strip()
+    if or_key and or_key != "not_set":
+        try:
+            resp = or_client.embeddings.create(model="text-embedding-004", input=text)
+            if resp and resp.data:
+                return resp.data[0].embedding
+        except Exception:
+            pass
+
+    # 3. 均未配置或均失败时降级返回 None，绝不中断聊天与评论主逻辑
+    return None
 
 def cosine_similarity(a, b):
+    if not a or not b or len(a) != len(b):
+        return 0
     dot = sum(x * y for x, y in zip(a, b))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(x * x for x in b))
@@ -653,13 +690,20 @@ def get_thread_memories(memory, thread_id):
 def get_user_semantic_memories(memory, user_id, query_text):
     user_memories = [
         m for m in memory
-        if m["user_id"] == str(user_id)
-        and not m["text"].startswith("[记忆压缩]")
+        if str(m.get("user_id")) == str(user_id)
+        and not m.get("text", "").startswith("[记忆压缩]")
     ]
     if not user_memories:
         return []
     query_embedding = get_embedding(query_text)
-    scored = [(cosine_similarity(query_embedding, m["embedding"]), m["text"]) for m in user_memories]
+    if not query_embedding:
+        # 无 embedding 时降级为返回用户最近的历史记录
+        return [m["text"] for m in user_memories[-MAX_SEMANTIC_RESULTS:] if m.get("text")]
+    scored = [
+        (cosine_similarity(query_embedding, m["embedding"]), m["text"])
+        for m in user_memories
+        if m.get("embedding") and len(m["embedding"]) == len(query_embedding)
+    ]
     scored.sort(reverse=True)
     # 相似度低于0.6的不检索，避免无关记忆污染当前对话
     return [text for sim, text in scored[:MAX_SEMANTIC_RESULTS] if sim > 0.6]
@@ -893,30 +937,76 @@ def maybe_evolve_personality(memory):
 def get_new_replies():
     url = "https://api.bilibili.com/x/msgfeed/reply"
     params = {"ps": 10, "pn": 1}
-    resp = requests.get(url, headers=headers, params=params)
-    data = resp.json()
-    if data["code"] != 0:
-        print(f"⚠️ API返回错误: code={data['code']}, msg={data.get('message', '')}")
+    try:
+        resp = requests.get(url, headers=headers, params=params)
+        data = resp.json()
+        if data["code"] != 0:
+            print(f"⚠️ 评论通知API返回错误: code={data['code']}, msg={data.get('message', '')}")
+            return []
+        items = data.get("data", {}).get("items", [])
+        print(f"📬 获取到 {len(items)} 条评论通知")
+        replies = []
+        for item in items:
+            r = item["item"]
+            root_id = r.get("root_id")
+            thread_id = root_id if (root_id and root_id != 0) else r["source_id"]
+            replies.append({
+                "rpid":      r["source_id"],
+                "oid":       r["subject_id"],
+                "thread_id": thread_id,
+                "type":      r["business_id"],
+                "content":   r["source_content"],
+                "username":  item["user"]["nickname"],
+                "mid":       item["user"]["mid"],
+                "is_at":     False
+            })
+        return replies
+    except Exception as e:
+        print(f"⚠️ 获取评论通知异常: {e}")
         return []
-    items = data.get("data", {}).get("items", [])
-    print(f"📬 获取到 {len(items)} 条通知")
-    replies = []
-    for item in items:
-        r = item["item"]
-        replies.append({
-            "rpid":      r["source_id"],
-            "oid":       r["subject_id"],
-            "thread_id": r.get("root_id") or r["source_id"],
-            "type":      r["business_id"],
-            "content":   r["source_content"],
-            "username":  item["user"]["nickname"],
-            "mid":       item["user"]["mid"]
-        })
-    return replies
 
-def get_comment_images(oid, rpid, comment_type):
+def get_new_ats():
+    """获取 @我的 消息中心通知"""
+    url = "https://api.bilibili.com/x/msgfeed/at"
+    params = {"ps": 10, "pn": 1}
+    try:
+        resp = requests.get(url, headers=headers, params=params)
+        data = resp.json()
+        if data.get("code") != 0:
+            print(f"⚠️ @我的 API返回错误: code={data.get('code')}, msg={data.get('message', '')}")
+            return []
+        items = data.get("data", {}).get("items", [])
+        ats = []
+        for item in items:
+            r = item.get("item", {})
+            source_id = r.get("source_id")
+            if not source_id:
+                continue
+            oid = r.get("subject_id") or r.get("target_id")
+            if not oid:
+                continue
+            root_id = r.get("root_id")
+            thread_id = root_id if (root_id and root_id != 0) else source_id
+            ats.append({
+                "rpid":      source_id,
+                "oid":       oid,
+                "thread_id": thread_id,
+                "type":      r.get("business_id", 1),
+                "content":   r.get("source_content", ""),
+                "username":  item.get("user", {}).get("nickname", "未知用户"),
+                "mid":       item.get("user", {}).get("mid"),
+                "is_at":     True
+            })
+        if ats:
+            print(f"🔔 获取到 {len(ats)} 条 @我的 消息")
+        return ats
+    except Exception as e:
+        print(f"⚠️ 获取 @我的 异常: {e}")
+        return []
+
+def get_comment_images(oid, rpid, comment_type, root_id=None):
     url = "https://api.bilibili.com/x/v2/reply/detail"
-    params = {"oid": oid, "type": comment_type, "root": rpid}
+    params = {"oid": oid, "type": comment_type, "root": root_id or rpid}
     try:
         resp = requests.get(url, headers=headers, params=params)
         data = resp.json()
@@ -1041,18 +1131,34 @@ impression简短描述用户性格/说话风格，如"友善健谈，喜欢聊�
         result.get("user_facts", [])
     )
 
-def send_reply(oid, rpid, content_type, reply_text):
+def send_reply(oid, root_id, parent_id_or_type, content_type_or_reply, reply_text=None):
+    """
+    发送评论回复（支持楼中楼嵌套与向下兼容）
+    当传入5个参数时: (oid, root_id, parent_id, content_type, reply_text)
+    当传入4个参数时（兼容原版）: (oid, rpid, content_type, reply_text)
+    """
+    if reply_text is None:
+        root = root_id
+        parent = root_id
+        content_type = parent_id_or_type
+        message = content_type_or_reply
+    else:
+        root = root_id
+        parent = parent_id_or_type
+        content_type = content_type_or_reply
+        message = reply_text
+
     url = "https://api.bilibili.com/x/v2/reply/add"
     data = {
         "oid": oid, "type": content_type,
-        "root": rpid, "parent": rpid,
-        "message": reply_text, "csrf": BILI_JCT
+        "root": root, "parent": parent,
+        "message": message, "csrf": BILI_JCT
     }
     resp = requests.post(url, headers=headers, data=data)
     result = resp.json()
     code = result["code"]
     if code != 0:
-        print(f"⚠️ 发送失败: code={code}, msg={result.get('message', '')}")
+        print(f"⚠️ 发送失败: code={code}, msg={result.get('message', '')} (root={root}, parent={parent})")
     if code == -111:
         raise SystemExit("❌ bili_jct 错误！程序停止，请检查 Cookie 后重启")
     if code == -101:
@@ -1336,9 +1442,24 @@ def run():
                 print(f"⚠️ 私信轮询失败，本轮继续处理评论：{exc}")
 
             replies = get_new_replies()
+            ats = get_new_ats()
+
+            # 合并回复通知与 @ 消息，去重
+            seen_rpids = set()
+            incoming_tasks = []
+            bot_uid = str(DEDE_USER_ID or "").strip()
+            for item in replies + ats:
+                sender_mid = str(item.get("mid", "")).strip()
+                # 过滤掉机器人自身发出的消息，防止死循环
+                if bot_uid and sender_mid == bot_uid:
+                    continue
+                if item["rpid"] not in seen_rpids:
+                    seen_rpids.add(item["rpid"])
+                    incoming_tasks.append(item)
+
             count = 0
 
-            for reply in replies:
+            for reply in incoming_tasks:
                 rpid = reply["rpid"]
                 mid = str(reply["mid"])
                 thread_id = str(reply["thread_id"])
@@ -1347,7 +1468,7 @@ def run():
                     continue
 
                 if is_blocked(reply["content"]):
-                    print(f"🚫 屏蔽评论 from {reply['username']}：{reply['content']}")
+                    print(f"🚫 屏蔽消息 from {reply['username']}：{reply['content']}")
                     log_security_event("keyword_blocked", mid, reply["username"], reply["content"], "触发关键词过滤")
                     replied_rpids.add(rpid)
                     save_replied(replied_rpids)
@@ -1355,7 +1476,8 @@ def run():
 
                 current_score = affection.get(mid, 0)
                 level = get_level(current_score, mid)
-                print(f"\n📩 {reply['username']}（{LEVEL_NAMES[level]} | {current_score}分）：{reply['content']}")
+                tag = "🔔 @" if reply.get("is_at") else "📩 评论"
+                print(f"\n{tag} {reply['username']}（{LEVEL_NAMES[level]} | {current_score}分）：{reply['content']}")
 
                 # 获取视频上下文
                 video_context = get_video_context(reply["oid"], reply["type"])
@@ -1369,8 +1491,8 @@ def run():
                 if memory_context:
                     print(f"🧠 调取记忆：{memory_context[:80]}...")
 
-                # 检测评论中的图片
-                image_urls = get_comment_images(reply["oid"], rpid, reply["type"])
+                # 检测评论中的图片（传入 thread_id 获取楼层详情）
+                image_urls = get_comment_images(reply["oid"], rpid, reply["type"], thread_id)
                 image_desc = ""
                 if image_urls:
                     print(f"🖼️ 发现 {len(image_urls)} 张图片，识别中...")
@@ -1444,14 +1566,14 @@ def run():
                     save_json("data/block_log.json", block_log)
                     log_security_event("user_blocked", mid, reply["username"], reply["content"],
                         f"原因：{reason}，好感度：{new_score}")
-                    send_reply(reply["oid"], rpid, reply["type"], "我不想和你说话了。")
+                    send_reply(reply["oid"], thread_id, rpid, reply["type"], "我不想和你说话了。")
                     block_user(int(mid))
                     print(f"🚫 已拉黑用户 {reply['username']}（{mid}）| 原因：{reason}")
                     replied_rpids.add(rpid)
                     save_replied(replied_rpids)
                     continue
 
-                success = send_reply(reply["oid"], rpid, reply["type"], ai_reply)
+                success = send_reply(reply["oid"], thread_id, rpid, reply["type"], ai_reply)
 
                 if success:
                     save_memory_record(memory, rpid, thread_id, mid, reply["username"], reply["content"], ai_reply)
@@ -1468,8 +1590,9 @@ def run():
                 if count >= MAX_REPLIES_PER_RUN:
                     break
 
-            print(f"\n⏳ 等待 {POLL_INTERVAL} 秒后再次检查...")
-            time.sleep(POLL_INTERVAL)
+            interval = int(get_raw_config().get("POLL_INTERVAL", 60))
+            print(f"\n⏳ 等待 {interval} 秒后再次检查...")
+            time.sleep(interval)
 
         except Exception as e:
             print(f"⚠️ 出错了：{e}，30秒后重试...")

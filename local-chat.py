@@ -1,12 +1,20 @@
+import sys
+import os
 import json
 import math
-import os
 import base64
 import uuid
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, send_from_directory, session
 from openai import OpenAI
 from bili_login import BiliQrLoginManager
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 # ========== 配置 ==========
 from config import *
@@ -31,14 +39,23 @@ MOOD_FILE = "data/mood.json"
 BLOCK_LOG_FILE = "data/block_log.json"
 IMAGE_DIR = "data/images"
 
-or_client = OpenAI(api_key=OR_API_KEY, base_url=OR_BASE_URL)
-embed_client = OpenAI(api_key=SILICON_API_KEY, base_url=_get_raw().get("EMBED_BASE_URL", "https://api.siliconflow.cn/v1"))
+or_client = OpenAI(
+    api_key=OR_API_KEY or "not_set",
+    base_url=OR_BASE_URL or "https://generativelanguage.googleapis.com/v1beta/openai/"
+)
+embed_client = OpenAI(
+    api_key=SILICON_API_KEY or "not_set",
+    base_url=_get_raw().get("EMBED_BASE_URL", "https://api.siliconflow.cn/v1") or "https://api.siliconflow.cn/v1"
+)
 
 def get_or_client(model_type="chat"):
     """获取指定模型类型的 OpenAI 客户端，支持独立 URL/Key"""
     from config import get_model_config
     base_url, api_key, model_id, fallback = get_model_config(model_type)
-    return OpenAI(api_key=api_key, base_url=base_url), model_id, fallback
+    return OpenAI(
+        api_key=api_key or "not_set",
+        base_url=base_url or "https://generativelanguage.googleapis.com/v1beta/openai/"
+    ), model_id, fallback
 
 # ========== 联网搜索 ==========
 SEARCH_KEYWORDS = [
@@ -208,14 +225,37 @@ def log_cost(source, input_tokens, output_tokens, model=""):
     save_json(COST_LOG_FILE, logs)
 
 def get_embedding(text):
+    if not text:
+        return None
     from config import get_raw_config
-    _ecfg = get_raw_config()
-    resp = embed_client.embeddings.create(model=_ecfg.get("EMBED_MODEL", "BAAI/bge-m3"), input=text)
-    if resp and resp.data:
-        return resp.data[0].embedding
-    return [0.0] * 1024
+    cfg = get_raw_config()
+    silicon_key = cfg.get("SILICON_API_KEY", "").strip()
+
+    # 1. 优先尝试配置的 SiliconFlow API
+    if silicon_key and silicon_key != "not_set":
+        try:
+            model_name = cfg.get("EMBED_MODEL", "").strip() or "BAAI/bge-m3"
+            resp = embed_client.embeddings.create(model=model_name, input=text)
+            if resp and resp.data:
+                return resp.data[0].embedding
+        except Exception:
+            pass
+
+    # 2. 如果未配置 SiliconFlow 或报错，尝试使用主模型 API (Gemini text-embedding-004)
+    or_key = cfg.get("OR_API_KEY", "").strip()
+    if or_key and or_key != "not_set":
+        try:
+            resp = or_client.embeddings.create(model="text-embedding-004", input=text)
+            if resp and resp.data:
+                return resp.data[0].embedding
+        except Exception:
+            pass
+
+    return None
 
 def cosine_similarity(a, b):
+    if not a or not b or len(a) != len(b):
+        return 0
     dot = sum(x * y for x, y in zip(a, b))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(x * x for x in b))
@@ -227,7 +267,10 @@ def load_user_profiles():
     return load_json(USER_PROFILE_FILE, {})
 
 def get_level(score, mid=None):
-    if str(mid) == str(OWNER_MID): return "special"
+    from config import get_raw_config
+    cur_owner = str(get_raw_config().get("OWNER_MID", 0)).strip()
+    if str(mid) == cur_owner and cur_owner != "0":
+        return "special"
     if score >= 51: return "close"
     if score >= 31: return "friend"
     if score >= 11: return "normal"
@@ -242,7 +285,13 @@ LEVEL_NAMES = {
 def get_relevant_memories(memory, query_text, limit=5):
     if not memory or not query_text: return []
     query_embedding = get_embedding(query_text)
-    scored = [(cosine_similarity(query_embedding, m["embedding"]), m["text"]) for m in memory if "embedding" in m]
+    if not query_embedding:
+        return [m["text"] for m in memory[-limit:] if m.get("text")]
+    scored = [
+        (cosine_similarity(query_embedding, m["embedding"]), m["text"])
+        for m in memory
+        if m.get("embedding") and len(m["embedding"]) == len(query_embedding)
+    ]
     scored.sort(reverse=True)
     return [text for _, text in scored[:limit]]
 
@@ -754,6 +803,8 @@ def summary():
 
 @app.route("/api/users", methods=["GET"])
 def users():
+    from config import sync_owner_state
+    sync_owner_state()
     affection = load_json(AFFECTION_FILE, {})
     profiles = load_user_profiles()
     sorted_users = sorted(affection.items(), key=lambda x: x[1], reverse=True)
@@ -766,7 +817,9 @@ def users():
         facts_str = "；".join(facts[-5:]) if facts else ""
         tags = profile.get("tags", [])
         result.append({
-            "uid": uid, "score": score,
+            "uid": uid,
+            "name": profile.get("name", ""),
+            "score": score,
             "level": LEVEL_NAMES.get(level, level),
             "impression": impression,
             "facts": facts_str,
@@ -776,6 +829,10 @@ def users():
 
 @app.route("/api/user/<uid>", methods=["GET"])
 def user_detail(uid):
+    from config import get_raw_config
+    cur_owner = str(get_raw_config().get("OWNER_MID", 0)).strip()
+    is_owner = (str(uid).strip() == cur_owner and cur_owner != "0")
+
     affection = load_json(AFFECTION_FILE, {})
     profiles = load_user_profiles()
     memory = load_json(MEMORY_FILE, [])
@@ -788,12 +845,201 @@ def user_detail(uid):
     )[:10]
     return jsonify({
         "uid": uid, "score": score,
+        "is_owner": is_owner,
+        "name": profile.get("name", ""),
         "level": LEVEL_NAMES.get(level, level),
         "impression": profile.get("impression", "暂无印象"),
         "facts": profile.get("facts", []),
         "tags": profile.get("tags", []),
         "memories": [{"time": m["time"], "text": m["text"]} for m in user_memories]
     })
+
+@app.route("/api/user/preset", methods=["POST"])
+def api_add_preset_user():
+    data = request.json or {}
+    uid = str(data.get("uid", "")).strip()
+    if not uid or not uid.isdigit():
+        return jsonify({"ok": False, "msg": "请输入有效的数字 UID"}), 400
+    try:
+        score = int(data.get("score", 35))
+    except (ValueError, TypeError):
+        score = 35
+    score = max(0, min(100, score))
+    name = str(data.get("name", "")).strip()
+    impression = str(data.get("impression", "")).strip() or "预设认识的好友"
+
+    # 更新好感度
+    affection = load_json(AFFECTION_FILE, {})
+    affection[uid] = score
+    save_json(AFFECTION_FILE, affection)
+
+    # 更新画像档案
+    raw_tags = data.get("tags")
+    custom_tags = []
+    if isinstance(raw_tags, str):
+        custom_tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+    elif isinstance(raw_tags, list):
+        custom_tags = [str(t).strip() for t in raw_tags if str(t).strip()]
+
+    if not custom_tags:
+        base_tags = ["预设认识的人", "好友" if score >= 51 else "熟人"]
+    else:
+        base_tags = list(custom_tags)
+        if "预设认识的人" not in base_tags:
+            base_tags.insert(0, "预设认识的人")
+
+    profiles = load_user_profiles()
+    if uid not in profiles:
+        profiles[uid] = {
+            "name": name,
+            "impression": impression,
+            "facts": [f"初始认识：{name}"] if name else [],
+            "tags": base_tags
+        }
+    else:
+        if name:
+            profiles[uid]["name"] = name
+        if impression:
+            profiles[uid]["impression"] = impression
+        cur_tags = profiles[uid].setdefault("tags", [])
+        for t in base_tags:
+            if t not in cur_tags:
+                cur_tags.append(t)
+        if score >= 51 and "好友" not in cur_tags:
+            cur_tags.append("好友")
+    save_json(USER_PROFILE_FILE, profiles)
+
+    return jsonify({"ok": True, "msg": "已成功添加预设认识的人"})
+
+@app.route("/api/user/update", methods=["POST"])
+def api_update_user():
+    """更新用户信息，支持修改UID（并迁移好感度、画像、记忆与推荐目标）"""
+    from config import get_raw_config, update_config
+    data = request.json or {}
+    old_uid = str(data.get("old_uid", "")).strip()
+    new_uid = str(data.get("new_uid", "")).strip() or old_uid
+
+    if not old_uid:
+        return jsonify({"ok": False, "msg": "缺少原 UID"}), 400
+    if not new_uid.isdigit():
+        return jsonify({"ok": False, "msg": "新 UID 必须为纯数字"}), 400
+
+    cur_owner = str(get_raw_config().get("OWNER_MID", 0)).strip()
+    is_owner = (old_uid == cur_owner and cur_owner != "0")
+
+    # 主人安全保护
+    if is_owner and new_uid != old_uid:
+        return jsonify({"ok": False, "msg": "主人 UID 仅可在系统基本设置中修改"}), 400
+
+    affection = load_json(AFFECTION_FILE, {})
+    profiles = load_user_profiles()
+
+    # UID 变更处理
+    if new_uid != old_uid:
+        if (new_uid in affection and new_uid != old_uid) or (new_uid in profiles and new_uid != old_uid):
+            return jsonify({"ok": False, "msg": f"目标 UID ({new_uid}) 已存在，无法更改为重复 UID"}), 400
+
+        # 迁移好感度
+        if old_uid in affection:
+            affection[new_uid] = affection.pop(old_uid)
+
+        # 迁移画像档案
+        if old_uid in profiles:
+            profiles[new_uid] = profiles.pop(old_uid)
+
+        # 迁移历史记忆 (memory.json)
+        try:
+            memories = load_json(MEMORY_FILE, [])
+            mem_changed = False
+            for m in memories:
+                if str(m.get("user_id", "")) == old_uid:
+                    m["user_id"] = new_uid
+                    mem_changed = True
+            if mem_changed:
+                save_json(MEMORY_FILE, memories)
+        except Exception as e:
+            print(f"⚠️ 迁移记忆失败: {e}")
+
+        # 迁移 @ 推荐目标名单 (config.json)
+        try:
+            cfg = get_raw_config()
+            raw_targets = cfg.get("PROACTIVE_MENTION_TARGETS")
+            if isinstance(raw_targets, list) and old_uid in [str(t) for t in raw_targets]:
+                new_targets = [new_uid if str(t) == old_uid else str(t) for t in raw_targets]
+                update_config({"PROACTIVE_MENTION_TARGETS": new_targets})
+        except Exception as e:
+            print(f"⚠️ 迁移推荐目标失败: {e}")
+
+    # 更新好感度
+    if not is_owner:
+        if "score" in data:
+            try:
+                score = int(data["score"])
+                affection[new_uid] = max(0, min(100, score))
+            except (ValueError, TypeError):
+                pass
+    else:
+        affection[new_uid] = 100
+
+    # 更新画像档案
+    if new_uid not in profiles:
+        profiles[new_uid] = {}
+    p = profiles[new_uid]
+
+    if "name" in data:
+        p["name"] = str(data["name"]).strip()
+    if "impression" in data:
+        p["impression"] = str(data["impression"]).strip()
+    if "tags" in data:
+        raw_tags = data["tags"]
+        if isinstance(raw_tags, str):
+            p["tags"] = [t.strip() for t in raw_tags.split(",") if t.strip()]
+        elif isinstance(raw_tags, list):
+            p["tags"] = [str(t).strip() for t in raw_tags if str(t).strip()]
+
+    # 若为主人，确保 tags 中包含 "主人"
+    if is_owner and "主人" not in p.get("tags", []):
+        p.setdefault("tags", []).append("主人")
+
+    save_json(AFFECTION_FILE, affection)
+    save_json(USER_PROFILE_FILE, profiles)
+
+    return jsonify({"ok": True, "msg": "用户信息已保存"})
+
+@app.route("/api/user/delete", methods=["POST"])
+def api_delete_user():
+    """删除指定用户及其好感度与画像档案"""
+    from config import get_raw_config, update_config
+    data = request.json or {}
+    uid = str(data.get("uid", "")).strip()
+    if not uid:
+        return jsonify({"ok": False, "msg": "缺少用户 UID"}), 400
+
+    cur_owner = str(get_raw_config().get("OWNER_MID", 0)).strip()
+    if uid == cur_owner and cur_owner != "0":
+        return jsonify({"ok": False, "msg": "主人不可删除，若需解绑请在系统基本设置中修改"}), 400
+
+    affection = load_json(AFFECTION_FILE, {})
+    profiles = load_user_profiles()
+
+    if uid in affection:
+        del affection[uid]
+        save_json(AFFECTION_FILE, affection)
+    if uid in profiles:
+        del profiles[uid]
+        save_json(USER_PROFILE_FILE, profiles)
+
+    # 从 @ 推荐目标列表中移除
+    try:
+        cfg = get_raw_config()
+        raw_targets = cfg.get("PROACTIVE_MENTION_TARGETS")
+        if isinstance(raw_targets, list) and uid in [str(t) for t in raw_targets]:
+            new_targets = [str(t) for t in raw_targets if str(t) != uid]
+            update_config({"PROACTIVE_MENTION_TARGETS": new_targets})
+    except Exception as e:
+        print(f"⚠️ 删除用户更新推荐目标失败: {e}")
+
+    return jsonify({"ok": True, "msg": "用户已成功删除"})
 
 @app.route("/api/personality", methods=["GET"])
 def personality():
@@ -1004,8 +1250,14 @@ def api_update_config():
 
     # 热更新全局 OpenAI 客户端
     try:
-        or_client = OpenAI(api_key=cfg["OR_API_KEY"], base_url=cfg["OR_BASE_URL"])
-        embed_client = OpenAI(api_key=cfg["SILICON_API_KEY"], base_url=cfg.get("EMBED_BASE_URL", "https://api.siliconflow.cn/v1"))
+        or_client = OpenAI(
+            api_key=cfg.get("OR_API_KEY") or "not_set",
+            base_url=cfg.get("OR_BASE_URL") or "https://generativelanguage.googleapis.com/v1beta/openai/"
+        )
+        embed_client = OpenAI(
+            api_key=cfg.get("SILICON_API_KEY") or "not_set",
+            base_url=cfg.get("EMBED_BASE_URL") or "https://api.siliconflow.cn/v1"
+        )
     except Exception as e:
         print(f"⚠️ 客户端重建失败：{e}")
 
@@ -1251,6 +1503,9 @@ def api_get_schedule():
         "SLEEP_START": cfg.get("SLEEP_START", 2),
         "SLEEP_END": cfg.get("SLEEP_END", 8),
         "MOOD_WEIGHT": cfg.get("MOOD_WEIGHT", 0.5),
+        "POLL_INTERVAL": cfg.get("POLL_INTERVAL", 60),
+        "PROACTIVE_MENTION_TARGETS": cfg.get("PROACTIVE_MENTION_TARGETS", None),
+        "PROACTIVE_MENTION_RANDOM": cfg.get("PROACTIVE_MENTION_RANDOM", False),
     })
 
 @app.route("/api/schedule/update", methods=["POST"])
@@ -1259,7 +1514,8 @@ def api_update_schedule():
     data = request.json
     allowed = {
         "PROACTIVE_VIDEO_COUNT", "PROACTIVE_COMMENT_COUNT", "PROACTIVE_TIMES_COUNT",
-        "EVOLVE_HOUR", "SLEEP_START", "SLEEP_END", "MOOD_WEIGHT",
+        "EVOLVE_HOUR", "SLEEP_START", "SLEEP_END", "MOOD_WEIGHT", "POLL_INTERVAL",
+        "PROACTIVE_MENTION_TARGETS", "PROACTIVE_MENTION_RANDOM",
     }
     updates = {k: v for k, v in data.items() if k in allowed}
     if not updates:

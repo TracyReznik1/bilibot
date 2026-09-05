@@ -129,8 +129,8 @@ bilibili-ai-bot/
 ### 2. 安装
 
 ```bash
-git clone https://github.com/chenluQwQ/bilibili-ai-bot.git
-cd bilibili-ai-bot
+git clone https://github.com/TracyReznik1/bilibot.git
+cd bilibot
 pip install -r Requirements.txt
 ```
 
@@ -335,16 +335,42 @@ A: 检查以下几点：
 
 ---
 
-## 📄 License
+## 📜 开源协议与免责声明
 
-[MIT License](LICENSE) — 随便用，随便改。
+### 开源协议 (License)
+本项目采用 [MIT License](LICENSE) 开源。您可以自由使用、复制、修改、合并、发布、分发、再许可或销售本项目副本，但需保留原作者版权声明及许可声明。
+
+### 免责声明 (Disclaimer)
+1. 本项目仅供技术研究与学习交流，禁止用于任何商业牟利、非法爬取、网络攻击或侵犯他人隐私之用途。
+2. 使用本项目需严格遵守各大平台服务协议及相关法律法规。因使用本项目产生的一切法律后果与账号风控风险均由使用者自行承担，与本项目贡献者无关。
+3. 请妥善保管好个人凭证（API 密钥、Cookies 等），严禁公开分享包含真实个人凭证与敏感数据的 `config.json` 或 `data/` 目录。
+
+---
+
+## 💡 鸣谢与第三方开源项目声明
+
+本项目站在开源社区巨人的肩膀上构建，感谢以下优秀的开源项目与技术支持（遵循各项目的原始开源许可协议）：
+
+| 开源项目 / 依赖组件 | 许可证类型 | 官方主页 / 仓库 | 说明与用途 |
+| :--- | :---: | :--- | :--- |
+| **Flask** | BSD-3-Clause | [pallets/flask](https://github.com/pallets/flask) | 核心轻量级 Web 服务面板与管理 API 路由 |
+| **OpenAI Python SDK** | Apache-2.0 | [openai/openai-python](https://github.com/openai/openai-python) | 标准化 LLM 模型客户端接口（兼容各大模型服务） |
+| **Requests** | Apache-2.0 | [psf/requests](https://github.com/psf/requests) | 稳定高效的 HTTP 客户端请求与通信 |
+| **yt-dlp** | The Unlicense | [yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp) | 视频与音视频流下载提取引擎 |
+| **Pillow (PIL)** | HPND | [python-pillow/Pillow](https://github.com/python-pillow/Pillow) | 图像处理、动态封面生成与扫码二维码渲染 |
+| **qrcode** | BSD-3-Clause | [lincolnloop/python-qrcode](https://github.com/lincolnloop/python-qrcode) | B 站登录二维码生成与终端/Web 呈现 |
+| **cryptography** | Apache-2.0 / BSD | [pyca/cryptography](https://github.com/pyca/cryptography) | 安全加解密（RSA 加密用于 B 站 Cookie 自动续期） |
+| **Google Generative AI** | Apache-2.0 | [google-gemini/generative-ai-python](https://github.com/google-gemini/generative-ai-python) | Gemini 多模态视觉与对话模型官方 SDK 支持 |
+| **lunardate** | MIT | [yllan/lunardate](https://github.com/yllan/lunardate) | 农历日期计算与节假日动态生成辅助 |
+| **Bilibili WBI 社区算法** | MIT | 社区逆向开源标准规范 | B 站防风控 WBI 签名混淆与接口鉴权算法 |
+| **bilibili-ai-bot (Upstream)** | MIT | [chenluQwQ/bilibili-ai-bot](https://github.com/chenluQwQ/bilibili-ai-bot) | 早期版本架构设计与原型启发 |
 
 ---
 
 ## 🌟 Star
 
-如果觉得有用，给个 Star 吧 ⭐
+如果觉得对你有帮助，欢迎在 [GitHub](https://github.com/TracyReznik1/bilibot) 点一个 Star ⭐！
 
-遇到问题欢迎提 issue，代码还在修缮中
+遇到问题或有新想法，欢迎提交 Issue 或 Pull Request。
 
 > 🤖 让每个 B站 UP主都能拥有一个有记忆、有感情、会成长的 AI 伙伴。

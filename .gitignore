@@ -18,3 +18,21 @@ Thumbs.db
 # 日志
 *.log
 nohup.out
+
+# 本地环境变量与凭证
+.env
+.env.*
+*.pem
+*.key
+
+# IDE与编辑器缓存
+.vscode/
+.idea/
+*.sublime-workspace
+*.suo
+*.user
+
+# 虚拟环境
+venv/
+.venv/
+env/

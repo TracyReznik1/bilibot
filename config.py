@@ -4,11 +4,19 @@
 """
 import json
 import os
+import sys
 import time
 import requests
 import re
 import hashlib
 from datetime import datetime
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 
@@ -23,23 +31,23 @@ _DEFAULTS = {
 
     # API 配置（全局默认，各模型可单独覆盖）
     "OR_API_KEY": "",
-    "OR_BASE_URL": "",
+    "OR_BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai/",
 
     # 对话模型
-    "OR_CHAT_MODEL": "",
-    "OR_CHAT_MODEL_FALLBACK": "",
+    "OR_CHAT_MODEL": "gemini-3.5-flash-lite",
+    "OR_CHAT_MODEL_FALLBACK": "gemini-3.1-flash-lite",
     "OR_CHAT_URL": "",       # 留空=用全局 OR_BASE_URL
     "OR_CHAT_KEY": "",       # 留空=用全局 OR_API_KEY
 
     # 视觉模型
-    "OR_VISION_MODEL": "",
-    "OR_VISION_MODEL_FALLBACK": "",
+    "OR_VISION_MODEL": "gemini-3.5-flash-lite",
+    "OR_VISION_MODEL_FALLBACK": "gemini-3.1-flash-lite",
     "OR_VISION_URL": "",
     "OR_VISION_KEY": "",
 
     # 搜索模型
-    "OR_SEARCH_MODEL": "",
-    "OR_SEARCH_MODEL_FALLBACK": "",
+    "OR_SEARCH_MODEL": "gemini-3.5-flash-lite",
+    "OR_SEARCH_MODEL_FALLBACK": "gemini-3.1-flash-lite",
     "OR_SEARCH_URL": "",
     "OR_SEARCH_KEY": "",
 
@@ -72,6 +80,7 @@ _DEFAULTS = {
     "PRIVATE_MESSAGE_TRUSTED_DOMAINS": ["bilibili.com", "b23.tv"],
     "PRIVATE_MESSAGE_MAX_MESSAGE_AGE": 3600,
     "PRIVATE_MESSAGE_MAX_PER_POLL": 3,
+    "POLL_INTERVAL": 60,  # 评论和@消息检查轮询间隔（秒）
 
     # ===== 主动行为开关 =====
     "PROACTIVE_LIKE": True,
@@ -105,6 +114,8 @@ _DEFAULTS = {
     # ===== 主动看视频的 UP主 UID 列表 =====
     "PROACTIVE_FOLLOW_UIDS": [],
     "PREFERRED_TIDS": [17, 160, 211, 3, 13, 167, 321, 36, 129],
+    "PROACTIVE_TAGS": [],                  # 固定目标标签/关键词，如 ["科技", "单机游戏"]
+    "PROACTIVE_EXCLUDE_KEYWORDS": [],       # 排除关键词，如 ["广告", "带货"]
 
     # ===== 自定义提示词（空=用默认） =====
     "PROMPT_DYNAMIC": "",
@@ -119,6 +130,10 @@ _DEFAULTS = {
     # ===== 主人信息 =====
     "OWNER_NAME": "",
     "OWNER_BILI_NAME": "",
+
+    # ===== 视频推荐 @ 目标 =====
+    "PROACTIVE_MENTION_TARGETS": None,     # None=默认勾选主人，[] = 不@任何人，有UID则勾选指定人员
+    "PROACTIVE_MENTION_RANDOM": False,     # 多选时是否随机挑一人@
 }
 
 # ========== 加载/保存 ==========
@@ -297,12 +312,88 @@ def reload_config():
     PROMPT_PRIVATE_MESSAGE = _cfg.get("PROMPT_PRIVATE_MESSAGE", "")
     return _cfg
 
+def sync_owner_state(data_dir=None):
+    """
+    通用数据自愈引擎（纯动态，零硬编码）：
+    1. 动态根据当前配置中绑定的 OWNER_MID 自动纠正满好感度 100
+    2. 自动清理初始占位遗留的无效 "0" 记录
+    3. 自动同步主人档案与身份标识
+    """
+    cfg = get_raw_config()
+    owner_mid = str(cfg.get("OWNER_MID", 0)).strip()
+    owner_name = str(cfg.get("OWNER_NAME", "")).strip() or "主人"
+    owner_bili = str(cfg.get("OWNER_BILI_NAME", "")).strip()
+
+    if not owner_mid or owner_mid == "0":
+        return
+
+    if data_dir is None:
+        data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    affection_file = os.path.join(data_dir, "affection.json")
+    profiles_file = os.path.join(data_dir, "user_profiles.json")
+
+    # 1. 好感度自愈
+    try:
+        if os.path.exists(affection_file):
+            with open(affection_file, "r", encoding="utf-8") as f:
+                affection = json.load(f)
+        else:
+            affection = {}
+        changed = False
+        if affection.get(owner_mid) != 100:
+            affection[owner_mid] = 100
+            changed = True
+        if "0" in affection:
+            del affection["0"]
+            changed = True
+        if changed:
+            os.makedirs(data_dir, exist_ok=True)
+            with open(affection_file, "w", encoding="utf-8") as f:
+                json.dump(affection, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"⚠️ 自愈好感度异常: {e}")
+
+    # 2. 用户画像与标签自愈
+    try:
+        if os.path.exists(profiles_file):
+            with open(profiles_file, "r", encoding="utf-8") as f:
+                profiles = json.load(f)
+        else:
+            profiles = {}
+        changed = False
+        if "0" in profiles:
+            del profiles["0"]
+            changed = True
+        if owner_mid not in profiles:
+            profiles[owner_mid] = {
+                "name": owner_bili or owner_name,
+                "impression": f"主人（{owner_name}）",
+                "facts": ["是机器人的主人"],
+                "tags": ["主人"]
+            }
+            changed = True
+        else:
+            p = profiles[owner_mid]
+            if "主人" not in p.get("tags", []):
+                p.setdefault("tags", []).append("主人")
+                changed = True
+            if owner_bili and p.get("name") != owner_bili:
+                p["name"] = owner_bili
+                changed = True
+        if changed:
+            os.makedirs(data_dir, exist_ok=True)
+            with open(profiles_file, "w", encoding="utf-8") as f:
+                json.dump(profiles, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"⚠️ 自愈用户画像异常: {e}")
+
 def update_config(updates: dict):
     """更新部分配置并保存"""
     cfg = _load_config()
     cfg.update(updates)
     _save_config(cfg)
     reload_config()
+    sync_owner_state()
     return cfg
 
 def get_config():
@@ -563,3 +654,10 @@ def refresh_bili_cookie():
 
     except Exception as e:
         return False, f"刷新出错: {e}"
+
+# 模块导入时自动执行数据自愈
+try:
+    sync_owner_state()
+except Exception:
+    pass
+

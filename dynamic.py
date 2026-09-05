@@ -4,8 +4,16 @@ import random
 import time
 import base64
 import os
+import sys
 from datetime import datetime
 from openai import OpenAI
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 # ========== 配置 ==========
 from config import *
@@ -21,8 +29,8 @@ headers = {
 }
 
 or_client = OpenAI(
-    api_key=OR_API_KEY,
-    base_url=OR_BASE_URL
+    api_key=OR_API_KEY or "not_set",
+    base_url=OR_BASE_URL or "https://generativelanguage.googleapis.com/v1beta/openai/"
 )
 
 # ========== 工具函数 ==========
